@@ -68,9 +68,10 @@ class FTPHook(BaseHook, LoggingMixin):
     downstream.
     """
 
-    def __init__(self, ftp_conn_id='ftp_default'):
+    def __init__(self, ftp_conn_id='ftp_default', remote_root_dir=""):
         self.ftp_conn_id = ftp_conn_id
         self.conn = None
+        self.remote_root_dir = remote_root_dir
 
     def __enter__(self):
         return self
@@ -98,34 +99,47 @@ class FTPHook(BaseHook, LoggingMixin):
         conn.quit()
         self.conn = None
 
-    def describe_directory(self, path):
+    def change_cwd(self, path):
+        conn = self.get_conn()
+        conn.cwd(path)
+
+    def describe_directory(self, path, reset_cwd=True):
         """
         Returns a dictionary of {filename: {attributes}} for all files
         on the remote system (where the MLSD command is supported).
 
         :param path: full path to the remote directory
         :type path: str
+        :param reset_cwd: whether or not to go back to the remote directories root path after listing path contents
+        :type reset_cwd: bool
         """
         conn = self.get_conn()
-        conn.cwd(path)
+        self.change_cwd(path)
         try:
             # only works in Python 3
             files = dict(conn.mlsd())
         except AttributeError:
             files = dict(mlsd(conn))
+        if reset_cwd is True:
+            self.change_cwd(self.remote_root_dir)
         return files
 
-    def list_directory(self, path, nlst=False):
+    def list_directory(self, path, nlst=False, reset_cwd=True):
         """
         Returns a list of files on the remote system.
 
         :param path: full path to the remote directory to list
         :type path: str
+        :param reset_cwd: whether or not to go back to the remote directories root path after listing path contents
+        :type reset_cwd: bool
+
         """
         conn = self.get_conn()
-        conn.cwd(path)
+        self.change_cwd(path)
 
         files = conn.nlst()
+        if reset_cwd is True:
+            self.change_cwd(path)
         return files
 
     def create_directory(self, path):
@@ -148,7 +162,7 @@ class FTPHook(BaseHook, LoggingMixin):
         conn = self.get_conn()
         conn.rmd(path)
 
-    def retrieve_file(self, remote_full_path, local_full_path_or_buffer):
+    def retrieve_file(self, remote_full_path, local_full_path_or_buffer, reset_cwd=True):
         """
         Transfers the remote file to a local location.
 
@@ -161,6 +175,8 @@ class FTPHook(BaseHook, LoggingMixin):
         :param local_full_path_or_buffer: full path to the local file or a
             file-like buffer
         :type local_full_path_or_buffer: str or file-like buffer
+        :param reset_cwd: whether or not to go back to the remote directories root path after listing path contents
+        :type reset_cwd: bool
         """
         conn = self.get_conn()
 
@@ -172,15 +188,18 @@ class FTPHook(BaseHook, LoggingMixin):
             output_handle = local_full_path_or_buffer
 
         remote_path, remote_file_name = os.path.split(remote_full_path)
-        conn.cwd(remote_path)
+        self.change_cwd(remote_path)
         self.log.info('Retrieving file from FTP: %s', remote_full_path)
         conn.retrbinary('RETR %s' % remote_file_name, output_handle.write)
         self.log.info('Finished retrieving file from FTP: %s', remote_full_path)
 
         if is_path:
             output_handle.close()
+        
+        if reset_cwd is True:
+            self.change_cwd(self.remote_root_dir)
 
-    def store_file(self, remote_full_path, local_full_path_or_buffer):
+    def store_file(self, remote_full_path, local_full_path_or_buffer, reset_cwd=True):
         """
         Transfers a local file to the remote location.
 
@@ -193,6 +212,8 @@ class FTPHook(BaseHook, LoggingMixin):
         :param local_full_path_or_buffer: full path to the local file or a
             file-like buffer
         :type local_full_path_or_buffer: str or file-like buffer
+        :param reset_cwd: whether or not to go back to the remote directories root path after listing path contents
+        :type reset_cwd: bool
         """
         conn = self.get_conn()
 
@@ -203,11 +224,14 @@ class FTPHook(BaseHook, LoggingMixin):
         else:
             input_handle = local_full_path_or_buffer
         remote_path, remote_file_name = os.path.split(remote_full_path)
-        conn.cwd(remote_path)
+        self.change_cwd(remote_path)
         conn.storbinary('STOR %s' % remote_file_name, input_handle)
 
         if is_path:
             input_handle.close()
+        
+        if reset_cwd is True:
+            self.change_cwd(self.remote_root_dir)
 
     def delete_file(self, path):
         """
